@@ -43,6 +43,8 @@ applicationId "com.example.tuition_tracker"
 applicationId "com.sifat.tuitiontracker"
 ```
 > এটা বদলানো জরুরি — `com.example.*` দিয়ে Play Store এ আপলোড করা যায় না, আর এমনিতেও এটা তোমার নিজের identifier হওয়া উচিত।
+>
+> ✅ এই প্রজেক্টে করা হয়ে গেছে (`com.sifat.tuitiontracker`)। Package name বদলালে Firebase এ নতুন Android app যোগ করতে হয় — `flutterfire configure` চালালে `google-services.json` আর `lib/firebase_options.dart` নিজে থেকেই আপডেট হয়।
 
 ## ধাপ ৭: Release APK বানাও
 ```

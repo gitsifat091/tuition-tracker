@@ -41,5 +41,15 @@
             <action android:name="android.intent.action.PROCESS_TEXT"/>
             <data android:mimeType="text/plain"/>
         </intent>
+        <!-- url_launcher: WhatsApp (https://wa.me) আর ফোনের ডায়ালার খোলার জন্যে।
+             Android 11+ এ এগুলো ঘোষণা না করলে অন্য অ্যাপ খুঁজে পাওয়া যায় না। -->
+        <intent>
+            <action android:name="android.intent.action.VIEW"/>
+            <data android:scheme="https"/>
+        </intent>
+        <intent>
+            <action android:name="android.intent.action.DIAL"/>
+            <data android:scheme="tel"/>
+        </intent>
     </queries>
 </manifest>

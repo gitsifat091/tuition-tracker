@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
-import 'package:url_launcher/url_launcher.dart';
+import '../utils/launcher.dart';
 import '../models/fee_record.dart';
 import '../models/student.dart';
 import '../providers/fee_provider.dart';
@@ -41,16 +41,10 @@ class _FeeTabState extends State<FeeTab> {
       showSnack(context, 'অভিভাবকের নম্বর দেওয়া নেই', isError: true);
       return;
     }
-    final cleanPhone = phone.replaceAll(RegExp(r'[^0-9]'), '');
-    final message = Uri.encodeComponent(
-      '${widget.student.name} এর ${Bn.monthKeyLabel(record.month)} মাসের টিউশন ফি '
-      '${Bn.taka(record.amount)} বাকি আছে। দয়া করে পরিশোধ করুন।',
-    );
-    final uri = Uri.parse('https://wa.me/$cleanPhone?text=$message');
+    final message = '${widget.student.name} এর ${Bn.monthKeyLabel(record.month)} মাসের টিউশন ফি '
+        '${Bn.taka(record.amount)} বাকি আছে। দয়া করে পরিশোধ করুন।';
 
-    if (await canLaunchUrl(uri)) {
-      await launchUrl(uri, mode: LaunchMode.externalApplication);
-    } else if (mounted) {
+    if (!await openWhatsApp(phone, message) && mounted) {
       showSnack(context, 'WhatsApp খোলা যায়নি', isError: true);
     }
   }

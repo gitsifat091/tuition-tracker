@@ -1,4 +1,4 @@
-package com.example.tuition_tracker
+package com.sifat.tuitiontracker
 
 import io.flutter.embedding.android.FlutterActivity
 

@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
-import 'package:url_launcher/url_launcher.dart';
+import '../utils/launcher.dart';
 import '../config/app_features.dart';
 import '../models/student.dart';
 import '../providers/attendance_provider.dart';
@@ -357,10 +357,7 @@ class _InfoTab extends StatelessWidget {
   }
 
   Future<void> _call(BuildContext context, String phone) async {
-    final uri = Uri.parse('tel:${phone.replaceAll(RegExp(r'[^0-9+]'), '')}');
-    if (await canLaunchUrl(uri)) {
-      await launchUrl(uri);
-    } else if (context.mounted) {
+    if (!await callPhone(phone) && context.mounted) {
       showSnack(context, 'ফোন অ্যাপ খোলা যায়নি', isError: true);
     }
   }
@@ -376,16 +373,11 @@ class _InviteCard extends StatelessWidget {
       showSnack(context, 'অভিভাবকের নম্বর দেওয়া নেই', isError: true);
       return;
     }
-    final cleanPhone = phone.replaceAll(RegExp(r'[^0-9]'), '');
-    final message = Uri.encodeComponent(
-      'টিউশন ট্র্যাকার অ্যাপে ${student.name} এর জন্যে ইনভাইট কোড: ${student.inviteCode}\n'
-      'অ্যাপে গিয়ে "ছাত্র/ছাত্রী" বেছে অ্যাকাউন্ট বানিয়ে এই কোডটা দাও।',
-    );
-    final uri = Uri.parse('https://wa.me/$cleanPhone?text=$message');
+    final message =
+        'টিউশন ট্র্যাকার অ্যাপে ${student.name} এর জন্যে ইনভাইট কোড: ${student.inviteCode}\n'
+        'অ্যাপে গিয়ে "ছাত্র/ছাত্রী" বেছে অ্যাকাউন্ট বানিয়ে এই কোডটা দাও।';
 
-    if (await canLaunchUrl(uri)) {
-      await launchUrl(uri, mode: LaunchMode.externalApplication);
-    } else if (context.mounted) {
+    if (!await openWhatsApp(phone, message) && context.mounted) {
       showSnack(context, 'WhatsApp খোলা যায়নি', isError: true);
     }
   }

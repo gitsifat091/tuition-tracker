@@ -14,6 +14,7 @@ import 'package:tuition_tracker/models/student.dart';
 import 'package:tuition_tracker/providers/attendance_provider.dart';
 import 'package:tuition_tracker/providers/fee_provider.dart';
 import 'package:tuition_tracker/utils/bn.dart';
+import 'package:tuition_tracker/utils/launcher.dart';
 
 void main() {
   group('Bn — বাংলা ফরম্যাট', () {
@@ -209,6 +210,23 @@ void main() {
       final updated = base().copyWith(parentPhone: null, classTime: null);
       expect(updated.parentPhone, isNull);
       expect(updated.classTime, isNull);
+    });
+  });
+
+  group('WhatsApp নম্বর', () {
+    test('লোকাল বাংলাদেশি নম্বরে দেশের কোড বসে', () {
+      expect(whatsAppNumber('01712345678'), '8801712345678');
+      expect(whatsAppNumber('017-1234 5678'), '8801712345678');
+    });
+
+    test('আগে থেকে দেশের কোড থাকলে বদলায় না', () {
+      expect(whatsAppNumber('+8801712345678'), '8801712345678');
+      expect(whatsAppNumber('8801712345678'), '8801712345678');
+      expect(whatsAppNumber('008801712345678'), '8801712345678');
+    });
+
+    test('বাংলা অঙ্কে লেখা নম্বরও কাজ করে', () {
+      expect(whatsAppNumber('০১৭১২৩৪৫৬৭৮'), '8801712345678');
     });
   });
 }
