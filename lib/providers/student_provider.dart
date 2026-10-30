@@ -27,6 +27,7 @@ class StudentProvider extends ChangeNotifier {
     }
 
     loading = true;
+    _checkedInvites.clear();
     _sub = _db
         .collection('students')
         .where('tutorId', isEqualTo: tutorId)
@@ -36,14 +37,60 @@ class StudentProvider extends ChangeNotifier {
         ..sort((a, b) => a.name.compareTo(b.name));
       loading = false;
       notifyListeners();
+      _ensureInvites();
     });
   }
+
+  /// এই সেশনে যে কোডগুলোর invites ডকুমেন্ট আছে বলে নিশ্চিত হওয়া গেছে।
+  final Set<String> _checkedInvites = {};
+
+  /// পুরনো ছাত্রদের (invites collection আসার আগে যোগ করা) কোডের জন্যে
+  /// invites/{code} বানিয়ে দেয়, নইলে নতুন rules এ তারা signup করতে পারবে না।
+  Future<void> _ensureInvites() async {
+    final tutorId = _tutorId;
+    if (tutorId == null) return;
+    for (final s in _students) {
+      final code = s.inviteCode;
+      if (code == null || s.linkedUserId != null || _checkedInvites.contains(code)) continue;
+      _checkedInvites.add(code);
+      try {
+        final ref = _db.collection('invites').doc(code);
+        if (!(await ref.get()).exists) {
+          await ref.set(_inviteData(s.id, tutorId));
+        }
+      } catch (e) {
+        // অফলাইন বা কোড অন্য কারো — পরের বার অ্যাপ খুললে আবার চেষ্টা হবে।
+        _checkedInvites.remove(code);
+        debugPrint('invite sync failed for ${s.id}: $e');
+      }
+    }
+  }
+
+  Map<String, dynamic> _inviteData(String studentId, String tutorId) => {
+        'studentId': studentId,
+        'tutorId': tutorId,
+        'createdAt': DateTime.now(),
+      };
 
   Future<void> addStudent(Student student) async {
     if (_tutorId == null) return;
     student.tutorId = _tutorId!;
-    student.inviteCode = generateInviteCode();
-    await _db.collection('students').doc(student.id).set(student.toJson());
+
+    // invites/{code} শুধু create করা যায়, তাই কোড কোনোভাবে আগে থেকে
+    // থাকলে batch ব্যর্থ হয় — তখন নতুন কোড নিয়ে আবার চেষ্টা।
+    for (var attempt = 0;; attempt++) {
+      student.inviteCode = generateInviteCode();
+      final batch = _db.batch()
+        ..set(_db.collection('students').doc(student.id), student.toJson())
+        ..set(_db.collection('invites').doc(student.inviteCode), _inviteData(student.id, _tutorId!));
+      try {
+        await batch.commit();
+        _checkedInvites.add(student.inviteCode!);
+        return;
+      } on FirebaseException catch (e) {
+        if (e.code != 'permission-denied' || attempt >= 2) rethrow;
+      }
+    }
   }
 
   /// এডিট স্ক্রিন যে ফিল্ডগুলোর মালিক শুধু সেগুলোই লেখা হয়।
@@ -68,19 +115,48 @@ class StudentProvider extends ChangeNotifier {
   }
 
   Future<void> deleteStudent(String id) async {
+    if (_tutorId == null) return;
     // যুক্ত সব ডেটাও (attendance/fee/note/syllabus) একসাথে মুছে দেওয়া হয়,
     // যাতে database এ orphaned (কোনো ছাত্রের সাথে যুক্ত নেই এমন) রেকর্ড না থাকে।
+    //
+    // tutorId ফিল্টার দরকার — rules শুধু নিজের রেকর্ড পড়তে দেয়, তাই শুধু
+    // studentId দিয়ে query করলে পুরো query টাই permission-denied হয়।
     final collections = ['attendance', 'fees', 'notes', 'syllabus', 'exams'];
-    final batch = _db.batch();
+    final refs = <DocumentReference>[];
 
     for (final col in collections) {
-      final snap = await _db.collection(col).where('studentId', isEqualTo: id).get();
-      for (final doc in snap.docs) {
-        batch.delete(doc.reference);
+      final snap = await _db
+          .collection(col)
+          .where('tutorId', isEqualTo: _tutorId)
+          .where('studentId', isEqualTo: id)
+          .get();
+      refs.addAll(snap.docs.map((d) => d.reference));
+    }
+
+    // Firestore এক batch এ সর্বোচ্চ ৫০০টা লেখা নেয় — কয়েক বছরের উপস্থিতি
+    // থাকলে এক batch এ সব ধরত না। ছাত্রের ডকুমেন্ট সবার শেষে মোছা হয়,
+    // যাতে মাঝপথে ব্যর্থ হলেও আবার মুছতে চাইলে ছাত্রটা তালিকায় থাকে।
+    for (var start = 0; start < refs.length; start += 400) {
+      final end = start + 400 > refs.length ? refs.length : start + 400;
+      final batch = _db.batch();
+      for (final ref in refs.sublist(start, end)) {
+        batch.delete(ref);
+      }
+      await batch.commit();
+    }
+
+    // আলাদা করে, ব্যর্থ হলেও থামে না — পুরনো ছাত্রের invites ডকুমেন্ট হয়তো
+    // কখনো বানানোই হয়নি, আর না-থাকা ডকুমেন্ট মোছা rules এ আটকে যায়।
+    final inviteCode = getById(id)?.inviteCode;
+    if (inviteCode != null) {
+      try {
+        await _db.collection('invites').doc(inviteCode).delete();
+      } catch (e) {
+        debugPrint('invite delete failed for $id: $e');
       }
     }
-    batch.delete(_db.collection('students').doc(id));
-    await batch.commit();
+
+    await _db.collection('students').doc(id).delete();
   }
 
   Future<void> archiveStudent(String id) async {

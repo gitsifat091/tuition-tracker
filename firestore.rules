@@ -3,76 +3,155 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
 
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function studentDoc(studentId) {
+      return get(/databases/$(database)/documents/students/$(studentId));
+    }
+
+    // এই ছাত্র কি আমার (টিউটর হিসেবে)?
+    function isTutorOf(studentId) {
+      return signedIn() && studentDoc(studentId).data.tutorId == request.auth.uid;
+    }
+
+    // আমি কি এই ছাত্রের নিজের linked অ্যাকাউন্ট?
+    function isLinkedStudentOf(studentId) {
+      return signedIn() && studentDoc(studentId).data.get('linkedUserId', null) == request.auth.uid;
+    }
+
     // ---- users/{uid} ----
+    // প্রত্যেকে শুধু নিজের প্রোফাইল পড়বে/লিখবে। আগে যেকোনো logged-in user
+    // সবার নাম-ইমেইল পড়তে পারত, আর নিজের role ও বদলে ফেলতে পারত।
     match /users/{uid} {
-      allow read: if request.auth != null;
-      allow write: if request.auth != null && request.auth.uid == uid;
+      allow read: if signedIn() && request.auth.uid == uid;
+      allow create: if signedIn() && request.auth.uid == uid &&
+                    request.resource.data.role in ['teacher', 'student'];
+      allow update: if signedIn() && request.auth.uid == uid &&
+                    request.resource.data.role == resource.data.role;
+      allow delete: if false;
+    }
+
+    // ---- invites/{code} ----
+    // ইনভাইট কোডই ডকুমেন্ট id। ছাত্র signup এর সময় কোড জানলে শুধু ওই একটা
+    // ডকুমেন্ট `get` করতে পারে — list/query বন্ধ, তাই কোড খুঁজে বের করা যায় না।
+    match /invites/{code} {
+      allow get: if signedIn();
+      allow list: if false;
+
+      // শুধু create — একই কোডের ডকুমেন্ট আগে থেকে থাকলে (অন্য টিউটরের) ব্যর্থ হবে।
+      // getAfter: নতুন ছাত্র আর তার invite একই batch এ লেখা হয়।
+      allow create: if signedIn() &&
+                    request.resource.data.tutorId == request.auth.uid &&
+                    getAfter(/databases/$(database)/documents/students/$(request.resource.data.studentId))
+                      .data.tutorId == request.auth.uid;
+      allow update: if false;
+
+      // টিউটর নিজে, অথবা যে ছাত্র এই একই batch এ নিজেকে link করছে।
+      allow delete: if signedIn() &&
+                    (resource.data.tutorId == request.auth.uid ||
+                     getAfter(/databases/$(database)/documents/students/$(resource.data.studentId))
+                       .data.get('linkedUserId', null) == request.auth.uid);
     }
 
     // ---- students/{studentId} ----
     match /students/{studentId} {
-      // পড়া: যেকোনো logged-in user (teacher নিজের ছাত্র দেখবে, student invite-code
-      // lookup আর নিজের profile দেখার জন্যে) — ছোট স্কেলের personal app বলে এটা সহজ রাখা হলো
-      allow read: if request.auth != null;
+      // শুধু মালিক টিউটর আর linked ছাত্র।
+      allow read: if signedIn() &&
+                  (resource.data.tutorId == request.auth.uid ||
+                   resource.data.get('linkedUserId', null) == request.auth.uid);
 
-      // নতুন student বানানো — শুধু teacher, নিজের tutorId দিয়েই
-      allow create: if request.auth != null &&
-                    request.auth.uid == request.resource.data.tutorId;
+      allow create: if signedIn() &&
+                    request.resource.data.tutorId == request.auth.uid &&
+                    request.resource.data.get('linkedUserId', null) == null;
 
-      // Update — teacher (সব field) অথবা student নিজে
-      // (শুধু তখনই, যখন এখনো কেউ linked নেই আর নিজেকেই link করছে)
-      allow update: if request.auth != null &&
-                    (request.auth.uid == resource.data.tutorId ||
-                     (resource.data.linkedUserId == null &&
-                      request.resource.data.linkedUserId == request.auth.uid));
+      // টিউটর: সব field, কিন্তু ছাত্রকে অন্য টিউটরের নামে সরাতে পারবে না,
+      // আর linkedUserId শুধু মুছতে পারবে (অন্য কাউকে বসাতে পারবে না)।
+      allow update: if signedIn() &&
+                    resource.data.tutorId == request.auth.uid &&
+                    request.resource.data.tutorId == request.auth.uid &&
+                    (request.resource.data.get('linkedUserId', null) == resource.data.get('linkedUserId', null) ||
+                     request.resource.data.get('linkedUserId', null) == null);
 
-      allow delete: if request.auth != null && request.auth.uid == resource.data.tutorId;
+      // ছাত্র নিজেকে link করছে: প্রোফাইল এখনো কারো সাথে linked নয়, শুধু
+      // linkedUserId আর inviteCode বদলায়, আর একই batch এ invites/{code} মুছছে
+      // — অর্থাৎ সে আসলেই কোডটা জানে।
+      allow update: if signedIn() &&
+                    resource.data.get('linkedUserId', null) == null &&
+                    request.resource.data.linkedUserId == request.auth.uid &&
+                    request.resource.data.diff(resource.data).affectedKeys()
+                      .hasOnly(['linkedUserId', 'inviteCode']) &&
+                    request.resource.data.get('inviteCode', null) == null &&
+                    exists(/databases/$(database)/documents/invites/$(resource.data.inviteCode)) &&
+                    !existsAfter(/databases/$(database)/documents/invites/$(resource.data.inviteCode));
+
+      allow delete: if signedIn() && resource.data.tutorId == request.auth.uid;
     }
 
-    // ⚠️ পড়ার অনুমতি নিয়ে খোলা প্রশ্ন
-    // নিচের সব collection এ `allow read: if request.auth != null` — অর্থাৎ
-    // যে কেউ অ্যাকাউন্ট বানালেই *সব* টিউটরের ছাত্র, ফোন নম্বর আর ফি এর হিসাব
-    // পড়তে পারে। FIRESTORE_DATA_MODEL.md এ যে কড়া নিয়ম লেখা আছে (মালিক টিউটর
-    // অথবা linked ছাত্র) সেটা এখানে এখনো বসানো হয়নি।
-    //
-    // `students` এর ক্ষেত্রে এটা সহজে বদলানো যায় না — ছাত্র sign up করার সময়
-    // inviteCode দিয়ে query করে, তখনো সে কোনো profile এর সাথে linked নয়।
-    // ঠিক করতে হলে কোডগুলো আলাদা `invites/{code}` collection এ সরাতে হবে।
-    // বদলানোর আগে Firebase emulator এ পরীক্ষা করে নিও, নইলে অ্যাপ ডেটা পড়তে
-    // না পেরে খালি দেখাবে।
+    // ---- attendance, fees, notes, syllabus, exams — একই প্যাটার্ন ----
+    // পড়া: মালিক টিউটর অথবা ওই ছাত্রের linked অ্যাকাউন্ট
+    // create: নিজের tutorId দিয়ে, আর ছাত্রটা নিজের হতে হবে
+    // update: আগের মালিকও আমি, tutorId/studentId বদলানো যাবে না
+    //   (আগে শুধু নতুন ডেটার tutorId দেখা হতো — যে কেউ অন্যের রেকর্ডে নিজের
+    //   tutorId বসিয়ে ওভাররাইট করতে পারত)
+    // delete: মালিক টিউটর
+    function canReadChild() {
+      return signedIn() &&
+             (resource.data.tutorId == request.auth.uid ||
+              isLinkedStudentOf(resource.data.studentId));
+    }
 
-    // ---- attendance, fees, notes, syllabus — একই প্যাটার্ন ----
-    // পড়া: যেকোনো logged-in user (student নিজের data খুঁজে বের করবে studentId দিয়ে)
-    // create/update: শুধু owner teacher (নতুন ডেটাতে tutorId নিজের হতে হবে)
-    // delete: শুধু owner teacher (আগে থেকে থাকা ডেটার tutorId মিলতে হবে)
+    function canCreateChild() {
+      return signedIn() &&
+             request.resource.data.tutorId == request.auth.uid &&
+             isTutorOf(request.resource.data.studentId);
+    }
+
+    function canUpdateChild() {
+      return signedIn() &&
+             resource.data.tutorId == request.auth.uid &&
+             request.resource.data.tutorId == request.auth.uid &&
+             request.resource.data.studentId == resource.data.studentId;
+    }
+
+    function canDeleteChild() {
+      return signedIn() && resource.data.tutorId == request.auth.uid;
+    }
+
     match /attendance/{recordId} {
-      allow read: if request.auth != null;
-      allow create, update: if request.auth != null && request.auth.uid == request.resource.data.tutorId;
-      allow delete: if request.auth != null && request.auth.uid == resource.data.tutorId;
+      allow read: if canReadChild();
+      allow create: if canCreateChild();
+      allow update: if canUpdateChild();
+      allow delete: if canDeleteChild();
     }
 
     match /fees/{recordId} {
-      allow read: if request.auth != null;
-      allow create, update: if request.auth != null && request.auth.uid == request.resource.data.tutorId;
-      allow delete: if request.auth != null && request.auth.uid == resource.data.tutorId;
+      allow read: if canReadChild();
+      allow create: if canCreateChild();
+      allow update: if canUpdateChild();
+      allow delete: if canDeleteChild();
     }
 
     match /notes/{noteId} {
-      allow read: if request.auth != null;
-      allow create, update: if request.auth != null && request.auth.uid == request.resource.data.tutorId;
-      allow delete: if request.auth != null && request.auth.uid == resource.data.tutorId;
+      allow read: if canReadChild();
+      allow create: if canCreateChild();
+      allow update: if canUpdateChild();
+      allow delete: if canDeleteChild();
     }
 
     match /syllabus/{itemId} {
-      allow read: if request.auth != null;
-      allow create, update: if request.auth != null && request.auth.uid == request.resource.data.tutorId;
-      allow delete: if request.auth != null && request.auth.uid == resource.data.tutorId;
+      allow read: if canReadChild();
+      allow create: if canCreateChild();
+      allow update: if canUpdateChild();
+      allow delete: if canDeleteChild();
     }
 
     match /exams/{examId} {
-      allow read: if request.auth != null;
-      allow create, update: if request.auth != null && request.auth.uid == request.resource.data.tutorId;
-      allow delete: if request.auth != null && request.auth.uid == resource.data.tutorId;
+      allow read: if canReadChild();
+      allow create: if canCreateChild();
+      allow update: if canUpdateChild();
+      allow delete: if canDeleteChild();
     }
 
     // সবকিছুর ডিফল্ট: বন্ধ

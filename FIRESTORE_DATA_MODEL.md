@@ -120,32 +120,24 @@ users (student) ──linkedUserId──> students (একটামাত্র 
 
 ## ৩. Invite Code Flow
 
-1. Teacher app এ "নতুন ছাত্র যোগ করুন" করলে `students` doc তৈরি হবে + এলোমেলো ৬-ডিজিট `inviteCode` (যেমন `482913`)।
-2. Teacher এই কোড ছাত্রকে WhatsApp/SMS এ পাঠাবে (এখনকার fee reminder button এর মতোই একটা "invite পাঠান" বাটন থাকবে)।
+1. Teacher app এ "নতুন ছাত্র যোগ করুন" করলে একই batch এ `students/{id}` doc আর `invites/{code}` doc (`{studentId, tutorId, createdAt}`) তৈরি হয় — `code` এলোমেলো ৬-ডিজিট (যেমন `482913`)।
+2. Teacher এই কোড ছাত্রকে WhatsApp/SMS এ পাঠাবে।
 3. Student app খুলে "আমি ছাত্র" বেছে sign up করবে, তারপর কোড লিখবে।
-4. App সেই কোড দিয়ে `students` collection এ query করে matching doc খুঁজবে, পেলে সেই doc এর `linkedUserId` তে student এর নতুন `uid` বসিয়ে দেবে।
+4. App `invites/{code}` ডকুমেন্টটা `get` করে `studentId` পায়, তারপর এক batch এ: `users/{uid}` বানায়, `students/{studentId}` এ `linkedUserId` বসায় আর `inviteCode` মোছে, আর `invites/{code}` মুছে দেয়।
 5. এরপর থেকে student login করলে তার `linkedUserId` দিয়ে নিজের profile আর সব data খুঁজে পাবে।
 
-## ৪. Security Rules (concept, deploy করার সময় চূড়ান্ত করবো)
+`invites` collection list/query করা যায় না, শুধু নির্দিষ্ট কোড দিয়ে `get` — তাই কোড না জানলে কোনো ছাত্রের তথ্য দেখা যায় না। পুরনো ছাত্রদের (invites আসার আগে যোগ করা) জন্যে টিউটরের অ্যাপ চালু হলে `StudentProvider` নিজেই `invites/{code}` বানিয়ে দেয়।
 
-```
-// students: teacher নিজের সব ছাত্র পড়তে/লিখতে পারবে,
-// student শুধু নিজের profile পড়তে পারবে (লিখতে পারবে না)
-match /students/{studentId} {
-  allow read: if request.auth.uid == resource.data.tutorId
-              || request.auth.uid == resource.data.linkedUserId;
-  allow write: if request.auth.uid == resource.data.tutorId;
-}
+## ৪. Security Rules
 
-// attendance, fees, notes, syllabus — একই প্যাটার্ন:
-// teacher পড়তে/লিখতে পারবে, student শুধু নিজেরটা পড়তে পারবে
-match /attendance/{recordId} {
-  allow read: if request.auth.uid == resource.data.tutorId
-              || request.auth.uid == get(/databases/$(database)/documents/students/$(resource.data.studentId)).data.linkedUserId;
-  allow write: if request.auth.uid == resource.data.tutorId;
-}
-// fees, notes, syllabus এও একই rule বসবে
-```
+চূড়ান্ত নিয়ম রিপোজিটরির `firestore.rules` ফাইলে আছে। সারসংক্ষেপ:
+
+- `users/{uid}` — শুধু নিজের প্রোফাইল পড়া/লেখা; `role` পরে বদলানো যায় না।
+- `invites/{code}` — যেকোনো logged-in user নির্দিষ্ট কোড `get` করতে পারে, list বন্ধ; শুধু টিউটর বানায়।
+- `students/{id}` — পড়া: মালিক টিউটর বা linked ছাত্র। টিউটর এডিট করতে পারে (অন্য টিউটরকে দিতে পারে না)। ছাত্র শুধু নিজেকে link করতে পারে, তাও একই batch এ invite মুছে (কোড জানার প্রমাণ)।
+- `attendance`, `fees`, `notes`, `syllabus`, `exams` — পড়া: মালিক টিউটর বা ওই ছাত্রের linked অ্যাকাউন্ট। লেখা: শুধু মালিক টিউটর, নিজের ছাত্রের জন্যেই; `tutorId`/`studentId` পরে বদলানো যায় না।
+
+Deploy: `firebase deploy --only firestore:rules`
 
 **মূলনীতি:** Student কোনো data কখনো *লিখতে* পারবে না (attendance/fee/homework সবই teacher-controlled), শুধু *পড়তে* পারবে — নিজেরটাই।
 
