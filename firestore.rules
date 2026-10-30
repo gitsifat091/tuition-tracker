@@ -1,0 +1,83 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ---- users/{uid} ----
+    match /users/{uid} {
+      allow read: if request.auth != null;
+      allow write: if request.auth != null && request.auth.uid == uid;
+    }
+
+    // ---- students/{studentId} ----
+    match /students/{studentId} {
+      // পড়া: যেকোনো logged-in user (teacher নিজের ছাত্র দেখবে, student invite-code
+      // lookup আর নিজের profile দেখার জন্যে) — ছোট স্কেলের personal app বলে এটা সহজ রাখা হলো
+      allow read: if request.auth != null;
+
+      // নতুন student বানানো — শুধু teacher, নিজের tutorId দিয়েই
+      allow create: if request.auth != null &&
+                    request.auth.uid == request.resource.data.tutorId;
+
+      // Update — teacher (সব field) অথবা student নিজে
+      // (শুধু তখনই, যখন এখনো কেউ linked নেই আর নিজেকেই link করছে)
+      allow update: if request.auth != null &&
+                    (request.auth.uid == resource.data.tutorId ||
+                     (resource.data.linkedUserId == null &&
+                      request.resource.data.linkedUserId == request.auth.uid));
+
+      allow delete: if request.auth != null && request.auth.uid == resource.data.tutorId;
+    }
+
+    // ⚠️ পড়ার অনুমতি নিয়ে খোলা প্রশ্ন
+    // নিচের সব collection এ `allow read: if request.auth != null` — অর্থাৎ
+    // যে কেউ অ্যাকাউন্ট বানালেই *সব* টিউটরের ছাত্র, ফোন নম্বর আর ফি এর হিসাব
+    // পড়তে পারে। FIRESTORE_DATA_MODEL.md এ যে কড়া নিয়ম লেখা আছে (মালিক টিউটর
+    // অথবা linked ছাত্র) সেটা এখানে এখনো বসানো হয়নি।
+    //
+    // `students` এর ক্ষেত্রে এটা সহজে বদলানো যায় না — ছাত্র sign up করার সময়
+    // inviteCode দিয়ে query করে, তখনো সে কোনো profile এর সাথে linked নয়।
+    // ঠিক করতে হলে কোডগুলো আলাদা `invites/{code}` collection এ সরাতে হবে।
+    // বদলানোর আগে Firebase emulator এ পরীক্ষা করে নিও, নইলে অ্যাপ ডেটা পড়তে
+    // না পেরে খালি দেখাবে।
+
+    // ---- attendance, fees, notes, syllabus — একই প্যাটার্ন ----
+    // পড়া: যেকোনো logged-in user (student নিজের data খুঁজে বের করবে studentId দিয়ে)
+    // create/update: শুধু owner teacher (নতুন ডেটাতে tutorId নিজের হতে হবে)
+    // delete: শুধু owner teacher (আগে থেকে থাকা ডেটার tutorId মিলতে হবে)
+    match /attendance/{recordId} {
+      allow read: if request.auth != null;
+      allow create, update: if request.auth != null && request.auth.uid == request.resource.data.tutorId;
+      allow delete: if request.auth != null && request.auth.uid == resource.data.tutorId;
+    }
+
+    match /fees/{recordId} {
+      allow read: if request.auth != null;
+      allow create, update: if request.auth != null && request.auth.uid == request.resource.data.tutorId;
+      allow delete: if request.auth != null && request.auth.uid == resource.data.tutorId;
+    }
+
+    match /notes/{noteId} {
+      allow read: if request.auth != null;
+      allow create, update: if request.auth != null && request.auth.uid == request.resource.data.tutorId;
+      allow delete: if request.auth != null && request.auth.uid == resource.data.tutorId;
+    }
+
+    match /syllabus/{itemId} {
+      allow read: if request.auth != null;
+      allow create, update: if request.auth != null && request.auth.uid == request.resource.data.tutorId;
+      allow delete: if request.auth != null && request.auth.uid == resource.data.tutorId;
+    }
+
+    match /exams/{examId} {
+      allow read: if request.auth != null;
+      allow create, update: if request.auth != null && request.auth.uid == request.resource.data.tutorId;
+      allow delete: if request.auth != null && request.auth.uid == resource.data.tutorId;
+    }
+
+    // সবকিছুর ডিফল্ট: বন্ধ
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

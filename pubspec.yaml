@@ -1,0 +1,76 @@
+name: tuition_tracker
+description: Personal tuition management app
+publish_to: 'none'
+version: 1.0.0+1
+
+environment:
+  sdk: '>=3.3.0 <4.0.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+  # Material widget-গুলোর (date picker / time picker) বাংলা লেবেলের জন্যে
+  flutter_localizations:
+    sdk: flutter
+
+  cupertino_icons: ^1.0.8
+
+  # Local storage — no longer used, kept out on purpose (Firestore is now
+  # the source of truth for the multi-user platform).
+
+  # State management
+  provider: ^6.1.2
+
+  # Charts (dashboard — income/attendance trend)
+  fl_chart: ^0.69.0
+
+  # Calendar UI (attendance tracker)
+  table_calendar: ^3.1.2
+
+  # IDs — random, not auto-increment, so future sync won't clash
+  uuid: ^4.5.1
+
+  # Date formatting
+  intl: ^0.20.2
+
+  # Fonts (consistent with DataLab/Amal UI)
+  google_fonts: ^6.2.1
+
+  # Optional: SMS/WhatsApp fee reminder shortcut
+  url_launcher: ^6.3.1
+
+  # Firebase — Auth + Firestore for the teacher/student platform
+  firebase_core: ^3.8.0
+  firebase_auth: ^5.3.3
+  cloud_firestore: ^5.5.0
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^4.0.0
+  flutter_launcher_icons: ^0.14.3
+  flutter_native_splash: ^2.4.4
+
+flutter_launcher_icons:
+  image_path: "assets/icon/icon.png"
+  android: true
+  ios: true
+  adaptive_icon_background: "#245C44"
+  adaptive_icon_foreground: "assets/icon/icon_foreground.png"
+
+flutter_native_splash:
+  color: "#245C44"
+  image: "assets/icon/icon_foreground.png"
+  android_12:
+    color: "#245C44"
+    image: "assets/icon/icon_foreground.png"
+
+flutter:
+  uses-material-design: true
+  assets:
+    - assets/icon/
+
+# NOTE: No build_runner / hive_generator here on purpose.
+# We use manual toJson/fromJson (same approach as DataLab) so there is
+# no code-gen step to break on Windows Dart SDK version mismatches.
